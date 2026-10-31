@@ -1,0 +1,18 @@
+[Unit]
+Description=Site Guardian Telegram bot (Claude bilan sayt monitoringi)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Botga serverni to'liq boshqarish huquqi kerak bo'lgani uchun root sifatida ishlaydi.
+# Cheklangan rejim kerak bo'lsa: alohida foydalanuvchi yarating va User= ni o'zgartiring.
+User=root
+WorkingDirectory=/opt/site-guardian
+EnvironmentFile=/opt/site-guardian/.env
+ExecStart=/opt/site-guardian/venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

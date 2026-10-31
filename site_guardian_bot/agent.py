@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Awaitable, Callable
 
 import anthropic
@@ -19,6 +20,13 @@ NotifyFn = Callable[[str], Awaitable[None]]
 SendFileFn = Callable[[str, str], Awaitable[str]]
 
 MAX_STEPS = 40
+# Server-side fallback qo'llab-quvvatlanadigan modellar (Haiku uchun yo'q)
+FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1"}
+BILLING_URL = "https://console.anthropic.com/settings/billing"
+
+
+class CreditError(Exception):
+    """API hisobida kredit tugagan — model almashtirish yordam bermaydi."""
 
 SYSTEM_PROMPT = f"""Siz "Site Guardian" — VPS serverda ishlaydigan DevOps/veb-dasturchi agentsiz.
 Egasi sizga Telegram orqali yozadi. Sizning vazifangiz: saytni kuzatish, muammolarni topish va tuzatish,
@@ -139,12 +147,84 @@ class Agent:
     """Har bir chat uchun alohida suhbat tarixi saqlanadi."""
 
     def __init__(self) -> None:
-        self.client = anthropic.AsyncAnthropic(api_key=CFG.anthropic_api_key, max_retries=4)
+        # Kam qayta urinish: limitga yetsa tezda keyingi modelga o'tamiz
+        self.client = anthropic.AsyncAnthropic(api_key=CFG.anthropic_api_key, max_retries=1)
         self.histories: dict[int, list] = {}
+        self.cooldown_until: dict[str, float] = {}   # model -> qachongacha ishlatilmaydi
+        self.last_model: str | None = None
         self.locks: dict[int, asyncio.Lock] = {}
 
     def reset(self, chat_id: int) -> None:
         self.histories.pop(chat_id, None)
+
+    def model_status(self) -> str:
+        now = time.time()
+        rows = []
+        for i, m in enumerate(CFG.claude_models, 1):
+            left = int(self.cooldown_until.get(m, 0) - now)
+            state = f"⏸ limit, {left}s dan keyin qaytadi" if left > 0 else "✅ tayyor"
+            mark = " ← oxirgi ishlatilgan" if m == self.last_model else ""
+            rows.append(f"{i}. {m} — {state}{mark}")
+        return "🧠 Modellar zanjiri (yaxshisidan boshlab):\n" + "\n".join(rows)
+
+    def _available_models(self) -> list[str]:
+        now = time.time()
+        ready = [m for m in CFG.claude_models if self.cooldown_until.get(m, 0) <= now]
+        # Hammasi limitda bo'lsa — eng tez bo'shaydiganini sinab ko'ramiz
+        return ready or sorted(CFG.claude_models, key=lambda m: self.cooldown_until.get(m, 0))[:1]
+
+    @staticmethod
+    def _is_credit_error(e: anthropic.APIStatusError) -> bool:
+        return "credit balance" in str(e.message).lower()
+
+    @staticmethod
+    def _retry_after(e: anthropic.APIStatusError) -> int | None:
+        try:
+            return int(float(e.response.headers.get("retry-after", "")))
+        except (ValueError, AttributeError):
+            return None
+
+    async def _create(self, history: list, notify: NotifyFn):
+        """Eng yaxshi bo'sh model bilan so'rov yuboradi; limit/yuklama bo'lsa keyingisiga o'tadi."""
+        last_error: Exception | None = None
+        for model in self._available_models() + [None]:
+            if model is None:
+                break
+            params = dict(
+                model=model,
+                max_tokens=16000,
+                system=SYSTEM_PROMPT,
+                tools=TOOLS,
+                messages=history,
+                output_config={"effort": CFG.claude_effort},
+                cache_control={"type": "ephemeral"},
+            )
+            if model in FALLBACK_MODELS:
+                params.update(betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+            try:
+                response = await self.client.beta.messages.create(**params)
+            except anthropic.APIStatusError as e:
+                if self._is_credit_error(e):
+                    raise CreditError() from e
+                # 429 limit, 529/5xx yuklama, 404 model mavjud emas -> keyingi model
+                if e.status_code in (404, 429) or e.status_code >= 500:
+                    wait = self._retry_after(e) or CFG.model_cooldown
+                    self.cooldown_until[model] = time.time() + wait
+                    last_error = e
+                    log.warning("Model %s ishlamadi (%s), %ss ga to'xtatildi", model, e.status_code, wait)
+                    await notify(f"⚠️ {model}: {'limitga yetdi' if e.status_code == 429 else f'xato {e.status_code}'}"
+                                 f" — keyingi modelga o'tyapman "
+                                 f"({f'{wait // 60} daqiqa' if wait >= 60 else f'{wait} sekund'}dan keyin qaytaman)")
+                    continue
+                raise
+            if model != self.last_model and self.last_model is not None:
+                better = CFG.claude_models.index(model) < CFG.claude_models.index(self.last_model) \
+                    if self.last_model in CFG.claude_models else False
+                if better:
+                    await notify(f"⬆️ Limit tiklandi — yana yaxshiroq modelga qaytdim: {model}")
+            self.last_model = model
+            return response
+        raise last_error or RuntimeError("Hech qanday model mavjud emas")
 
     async def _needs_approval(self, name: str, args: dict) -> tuple[bool, str]:
         mode = CFG.confirm_mode
@@ -201,17 +281,12 @@ class Agent:
 
             for _step in range(MAX_STEPS):
                 try:
-                    response = await self.client.beta.messages.create(
-                        model=CFG.claude_model,
-                        max_tokens=16000,
-                        system=SYSTEM_PROMPT,
-                        tools=TOOLS,
-                        messages=history,
-                        output_config={"effort": CFG.claude_effort},
-                        cache_control={"type": "ephemeral"},
-                        betas=["server-side-fallback-2026-07-01"],
-                        fallbacks="default",
-                    )
+                    response = await self._create(history, notify)
+                except CreditError:
+                    del history[turn_start:]
+                    return ("💳 Anthropic API hisobingizda kredit tugagan.\n"
+                            f"To'ldirish: {BILLING_URL}\n"
+                            "(claude.ai obunasi API uchun ishlamaydi — API krediti alohida sotib olinadi.)")
                 except anthropic.APIStatusError as e:
                     del history[turn_start:]  # yarim qolgan navbatni tarixdan olib tashlash
                     return f"Claude API xatosi ({e.status_code}): {e.message}"

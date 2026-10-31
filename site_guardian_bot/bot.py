@@ -117,6 +117,7 @@ Buyruqlar:
 /monitor on|off — monitoringni yoqish/o'chirish
 /diagnose — Claude saytni to'liq tekshirsin
 /new — Claude bilan yangi suhbat (kontekstni tozalash)
+/model — modellar zanjiri va limit holati
 /id — Telegram ID'ingiz
 
 Fayl yuborsangiz — u {CFG.site_dir}/uploads/ ga saqlanadi.
@@ -138,7 +139,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = await tools.site_status()
     st = monitor.STATE
     text += (f"\n\n📡 Monitoring: {'yoqilgan' if st.enabled else 'o`chirilgan'}, har {CFG.check_interval}s"
-             f"\nJami tekshiruv: {st.checks_total}, xatolar: {st.failures_total}")
+             f"\nJami tekshiruv: {st.checks_total}, xatolar: {st.failures_total}"
+             f"\n\n{AGENT.model_status()}")
     await msg.edit_text(text[:TG_LIMIT])
 
 
@@ -194,6 +196,11 @@ async def cmd_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     AGENT.reset(update.effective_chat.id)
     await update.message.reply_text("🧹 Yangi suhbat boshlandi.")
+
+
+@admin_only
+async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(AGENT.model_status())
 
 
 @admin_only
@@ -290,6 +297,7 @@ def main():
     app.add_handler(CommandHandler("monitor", cmd_monitor))
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CommandHandler("diagnose", cmd_diagnose))
+    app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

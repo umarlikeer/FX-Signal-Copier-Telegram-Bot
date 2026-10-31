@@ -57,6 +57,7 @@ Telegramda botga `/start` yozing.
 | `/diagnose` | Claude to'liq tekshiruv o'tkazadi (hech narsani o'zgartirmaydi) |
 | `/monitor on\|off` | Monitoringni yoqish/o'chirish |
 | `/new` | Claude bilan yangi suhbat |
+| `/model` | Modellar zanjiri va limit holati |
 | fayl yuborish | `SITE_DIR/uploads/` ga saqlanadi; izoh (caption) yozsangiz, Claude u bilan ishlaydi |
 
 Misollar:
@@ -72,9 +73,18 @@ Misollar:
 | `CONFIRM_MODE` | `dangerous` (tavsiya) / `all` / `none` |
 | `AUTO_DIAGNOSE` | Sayt tushsa Claude avtomatik tahlil qilsinmi |
 | `AUTO_FIX` | Tahlildan keyin o'zi tuzatsinmi (xavfli amallar baribir tasdiq so'raydi) |
-| `CLAUDE_MODEL` | Standart: `claude-opus-5-5` |
+| `CLAUDE_MODELS` | Modellar zanjiri, yaxshisidan boshlab. Limit (429) yoki yuklama bo'lsa keyingisiga o'tadi |
+| `MODEL_COOLDOWN` | Shuncha sekunddan keyin yana eng yaxshi modelga qaytadi (standart 300) |
 | `CLAUDE_EFFORT` | `low` / `medium` / `high` / `xhigh` / `max` — yuqorisi aqlliroq, lekin qimmatroq |
 | `CHECK_INTERVAL` | Tekshiruv oralig'i, sekund |
+
+## 🔄 Yangilash
+```bash
+cd FX-Signal-Copier-Telegram-Bot/site_guardian_bot && sudo bash deploy/update.sh
+```
+
+## ❗ "Your credit balance is too low" xatosi
+Bu koddagi xato emas — Anthropic API hisobida pul yo'q. https://console.anthropic.com/settings/billing da kredit sotib oling (claude.ai Pro/Max obunasi API'ga kirmaydi). Kredit hamma modellar uchun umumiy, shuning uchun model almashtirish bu xatoni hal qilmaydi.
 
 ## 💰 Narx haqida
 Claude API ishlatilgan token uchun to'lanadi. Har bir topshiriq odatda bir necha sentdan bir necha o'n sentgacha turadi (vazifa murakkabligiga qarab). Monitoringning o'zi (HTTP tekshiruv) bepul — Claude faqat siz yozganda yoki `AUTO_DIAGNOSE` ishlaganda chaqiriladi. Console'da oylik limit qo'yib qo'ying.

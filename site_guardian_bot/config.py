@@ -22,7 +22,13 @@ class Config:
         default_factory=lambda: frozenset(int(x) for x in _list("ADMIN_IDS"))
     )
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-5-5")
+    # Modellar zanjiri: eng yaxshisidan boshlab. Limit/yuklama bo'lsa keyingisiga o'tadi,
+    # cooldown tugagach yana eng yaxshisiga qaytadi.
+    claude_models: list[str] = field(default_factory=lambda: list(dict.fromkeys(
+        _list("CLAUDE_MODELS")
+        or [os.getenv("CLAUDE_MODEL", "claude-opus-5-5"), "claude-sonnet-5-5", "claude-haiku-5-5"]
+    )))
+    model_cooldown: int = int(os.getenv("MODEL_COOLDOWN", "300"))
     claude_effort: str = os.getenv("CLAUDE_EFFORT", "high")
 
     site_urls: list[str] = field(default_factory=lambda: _list("SITE_URLS"))
